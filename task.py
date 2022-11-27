@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.prompt import Confirm
 from dateutil.relativedelta import relativedelta
+from dateutil.parser import parse as dateParse
 import sqlite3
 import os
 import re
@@ -35,13 +36,13 @@ def getProjectByName(conn, name: str) -> int:
     elif len(rows) == 0:
         cur.execute("""
             INSERT INTO projects (name) VALUES (?);
-        """, (name, ))
+        """, (name,))
 
         inserted_id = cur.lastrowid
 
         try:
             conn.commit()
-        except:
+        except sqlite3.Error as e:
             conn.rollback()
             raise Exception(f"Can't create a new project with name '{name}'.")
 
@@ -51,26 +52,30 @@ def getProjectByName(conn, name: str) -> int:
 
 
 def calculateDueDate(due: str):
-    dt = datetime.now()
-
-    if due.endswith("day") or due.endswith("days"):
-        s = re.sub(r'day\w*', "", due)
-        s = "1" if s == "" else s
-        dt = dt + relativedelta(days=int(s))
-    if due.endswith("week") or due.endswith("weeks"):
-        s = re.sub(r'week\w*', "", due)
-        s = "1" if s == "" else s
-        dt = dt + relativedelta(weeks=int(s))
-    if due.endswith("month") or due.endswith("months"):
-        s = re.sub(r'month\w*', "", due)
-        s = "1" if s == "" else s
-        dt = dt + relativedelta(months=int(s))
-    if due.endswith("year") or due.endswith("years"):
-        s = re.sub(r'year\w*', "", due)
-        s = "1" if s == "" else s
-        dt = dt + relativedelta(years=int(s))
+    try:  # first check if is a date
+        dt = dateParse(due, fuzzy=False)
+    except:
+        dt = datetime.now()
+        if due.endswith("day") or due.endswith("days"):
+            delta = relativedelta(days=regexDueDate("day", due))
+        elif due.endswith("week") or due.endswith("weeks"):
+            delta = relativedelta(weeks=regexDueDate("week", due))
+        elif due.endswith("month") or due.endswith("months"):
+            delta = relativedelta(months=regexDueDate("month", due))
+        elif due.endswith("year") or due.endswith("years"):
+            delta = relativedelta(years=regexDueDate("year", due))
+        else:
+            console.print("Can't find relative date in --due parameter.")
+            return None
+        dt = dt + delta
 
     return datetime.timestamp(dt)
+
+
+def regexDueDate(regex: str, due: str) -> int:
+    s = re.sub(rf'{regex}\w*', "", due)
+    s = "1" if s == "" else s
+    return int(s)
 
 
 if __name__ == "__main__":
@@ -91,7 +96,7 @@ if __name__ == "__main__":
         """)
 
     if arguments["add"]:
-        if arguments["<task>"] is not None:
+        if arguments["<task>"]:
             text = str(arguments["<task>"])
 
             cur = conn.cursor()
@@ -101,15 +106,20 @@ if __name__ == "__main__":
 
             task_id = cur.lastrowid
 
-            if arguments["--due"] is not None:
+            if arguments["--due"]:
                 due = str(arguments["--due"])
                 due_date = calculateDueDate(due)
 
-                cur.execute(f"""
-                    UPDATE tasks SET due = ? WHERE id = {task_id} 
-                """, (due_date,))
+                if due_date:
+                    cur.execute(f"""
+                        UPDATE tasks SET due = ? WHERE id = {task_id} 
+                    """, (due_date,))
+                else:
+                    conn.rollback()
+                    console.print("Error adding task.")
+                    exit()
 
-            if arguments["--project"] is not None:
+            if arguments["--project"]:
                 project = str(arguments["--project"])
                 project_id = getProjectByName(conn, project)
 
@@ -129,21 +139,26 @@ if __name__ == "__main__":
         task_id = int(arguments["<id>"])
         cur = conn.cursor()
 
-        if arguments["<task>"] is not None:
+        if arguments["<task>"]:
             text = str(arguments["<task>"])
             cur.execute(f"""
                 UPDATE tasks SET title = ? WHERE id = {task_id} 
             """, (text,))
 
-        if arguments["--due"] is not None:
+        if arguments["--due"]:
             due = str(arguments["--due"])
             due_date = calculateDueDate(due)
 
-            cur.execute(f"""
-               UPDATE tasks SET due = ? WHERE id = {task_id} 
-            """, (due_date,))
+            if due_date:
+                cur.execute(f"""
+                   UPDATE tasks SET due = ? WHERE id = {task_id} 
+                """, (due_date,))
+            else:
+                conn.rollback()
+                console.print("Error updating task.")
+                exit()
 
-        if arguments["--mark"] is not None:
+        if arguments["--mark"]:
             mark = str(arguments["--mark"])
             resolved = 1 if mark.lower() == "resolved" else 0
 
@@ -151,7 +166,7 @@ if __name__ == "__main__":
                 UPDATE tasks SET resolved = ? WHERE id = {task_id} 
             """, (resolved,))
 
-        if arguments["--project"] is not None:
+        if arguments["--project"]:
             project = str(arguments["--project"])
             project_id = getProjectByName(conn, project)
 
@@ -168,7 +183,7 @@ if __name__ == "__main__":
             console.print("Error updating task.")
 
     if arguments["resolved"]:
-        if arguments["<id>"] is not None:
+        if arguments["<id>"]:
             task_id = int(arguments["<id>"])
 
             cur = conn.cursor()
@@ -184,7 +199,7 @@ if __name__ == "__main__":
                 console.print("Error updating task.")
 
     if arguments["delete"]:
-        if arguments["<id>"] is not None:
+        if arguments["<id>"]:
             if Confirm.ask("You want remove this task?"):
                 task_id = int(arguments["<id>"])
 
@@ -225,7 +240,7 @@ if __name__ == "__main__":
                 if re.match(rf'{regex}', str(row[2])) is None:
                     continue
                 else:
-                    if arguments["--project"] is not None:
+                    if arguments["--project"]:
                         project = str(arguments["--project"])
                         if str(row[5]) != project:
                             continue
