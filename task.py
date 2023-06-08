@@ -11,7 +11,7 @@ Usage:
   task.py -h | --help
 
 Options:
-  -h --help     Show this screen.
+    -h --help     Show this screen.
 """
 from docopt import docopt
 from datetime import datetime
